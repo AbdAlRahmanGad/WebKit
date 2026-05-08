@@ -40,6 +40,7 @@
 #include <WebCore/HistoryItem.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/Page.h>
+#include <wtf/Assertions.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
@@ -64,12 +65,26 @@ void WebBackForwardListProxy::addItem(Ref<HistoryItem>&& item)
         return;
 
     LOG(BackForward, "(Back/Forward) WebProcess pid %i setting item %p for id %s with url %s", getCurrentProcessID(), item.ptr(), item->itemID().toString().utf8().data(), item->urlString().utf8().data());
+    WTFLogAlways("NAVAPI DEBUG WebBackForwardListProxy::addItem pid=%i item=%p itemID=%s frameID=%llu url=%s childCount=%zu",
+        getCurrentProcessID(),
+        item.ptr(),
+        item->itemID().toString().utf8().data(),
+        item->frameID() ? static_cast<unsigned long long>(item->frameID()->toUInt64()) : 0,
+        item->urlString().utf8().data(),
+        item->children().size());
     m_cachedBackForwardListCounts = std::nullopt;
     page->send(Messages::WebBackForwardList::BackForwardAddItem(toFrameState(item.get())));
 }
 
 void WebBackForwardListProxy::setChildItem(BackForwardFrameItemIdentifier frameItemID, Ref<HistoryItem>&& item)
 {
+    WTFLogAlways("NAVAPI DEBUG WebBackForwardListProxy::setChildItem pid=%i parentFrameItemID=%s childItem=%p childFrameID=%llu childURL=%s childCount=%zu",
+        getCurrentProcessID(),
+        frameItemID.toString().utf8().data(),
+        item.ptr(),
+        item->frameID() ? static_cast<unsigned long long>(item->frameID()->toUInt64()) : 0,
+        item->urlString().utf8().data(),
+        item->children().size());
     if (RefPtr page = m_page.get())
         page->send(Messages::WebBackForwardList::BackForwardSetChildItem(frameItemID, toFrameState(item)));
 }
@@ -87,18 +102,39 @@ void WebBackForwardListProxy::goToItem(HistoryItem& item)
 Vector<Ref<HistoryItem>> WebBackForwardListProxy::allItems(FrameIdentifier frameID)
 {
     RefPtr page = m_page.get();
-    if (!page)
+    if (!page) {
+        WTFLogAlways("NAVAPI DEBUG WebBackForwardListProxy::allItems no page pid=%i frameID=%llu",
+            getCurrentProcessID(),
+            static_cast<unsigned long long>(frameID.toUInt64()));
         return { };
+    }
 
+    WTFLogAlways("NAVAPI DEBUG WebBackForwardListProxy::allItems request pid=%i frameID=%llu",
+        getCurrentProcessID(),
+        static_cast<unsigned long long>(frameID.toUInt64()));
     auto sendResult = m_page->sendSync(Messages::WebBackForwardList::BackForwardAllItems(frameID));
     auto [allFrameStates] = sendResult.takeReplyOr(Vector<Ref<FrameState>> { });
+    WTFLogAlways("NAVAPI DEBUG WebBackForwardListProxy::allItems reply pid=%i frameID=%llu count=%zu",
+        getCurrentProcessID(),
+        static_cast<unsigned long long>(frameID.toUInt64()),
+        allFrameStates.size());
 
     Ref historyItemClient = page->historyItemClient();
     auto ignoreHistoryItemChangesForScope = historyItemClient->ignoreChangesForScope();
 
     Vector<Ref<HistoryItem>> allItems;
-    for (Ref frameState : allFrameStates)
-        allItems.append(toHistoryItem(historyItemClient, WTF::move(frameState)));
+    for (Ref frameState : allFrameStates) {
+        auto item = toHistoryItem(historyItemClient, WTF::move(frameState));
+        WTFLogAlways("NAVAPI DEBUG WebBackForwardListProxy::allItems item pid=%i requestedFrameID=%llu item=%p itemFrameID=%llu itemID=%s url=%s childCount=%zu",
+            getCurrentProcessID(),
+            static_cast<unsigned long long>(frameID.toUInt64()),
+            item.ptr(),
+            item->frameID() ? static_cast<unsigned long long>(item->frameID()->toUInt64()) : 0,
+            item->itemID().toString().utf8().data(),
+            item->urlString().utf8().data(),
+            item->children().size());
+        allItems.append(WTF::move(item));
+    }
 
     return allItems;
 }

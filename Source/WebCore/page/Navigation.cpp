@@ -142,19 +142,55 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
     ASSERT(m_entries.isEmpty());
     ASSERT(!m_currentEntryIndex);
 
-    if (hasEntriesAndEventsDisabled())
+    RefPtr frame = this->frame();
+    RefPtr document = frame ? frame->document() : nullptr;
+    WTFLogAlways("NAVAPI DEBUG initializeForNewWindow start frame=%llu url=%s navigationType=%d previousWindow=%d entries=%zu currentIndex=%d",
+        frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+        document ? document->url().string().utf8().data() : "",
+        navigationType ? static_cast<int>(*navigationType) : -1,
+        !!previousWindow,
+        m_entries.size(),
+        m_currentEntryIndex ? static_cast<int>(*m_currentEntryIndex) : -1);
+
+    if (hasEntriesAndEventsDisabled()) {
+        WTFLogAlways("NAVAPI DEBUG initializeForNewWindow return entries/events disabled frame=%llu url=%s",
+            frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+            document ? document->url().string().utf8().data() : "");
         return;
+    }
 
     RefPtr page = frame()->page();
-    if (!page)
+    if (!page) {
+        WTFLogAlways("NAVAPI DEBUG initializeForNewWindow return no page frame=%llu url=%s",
+            frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+            document ? document->url().string().utf8().data() : "");
         return;
+    }
 
     RefPtr currentItem = frame()->loader().history().currentItem();
-    if (!currentItem)
+    if (!currentItem) {
+        WTFLogAlways("NAVAPI DEBUG initializeForNewWindow return no currentItem frame=%llu url=%s",
+            frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+            document ? document->url().string().utf8().data() : "");
         return;
+    }
+
+    WTFLogAlways("NAVAPI DEBUG initializeForNewWindow currentItem frame=%llu item=%p itemID=%s sequence=%llu url=%s previousItem=%p",
+        frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+        currentItem.get(),
+        currentItem->itemID().toString().utf8().data(),
+        static_cast<unsigned long long>(currentItem->itemSequenceNumber()),
+        currentItem->urlString().utf8().data(),
+        frame()->loader().history().previousItem());
 
     if (previousWindow) {
         Ref previousNavigation = previousWindow->navigation();
+
+        WTFLogAlways("NAVAPI DEBUG initializeForNewWindow previousWindow frame=%llu previousEntries=%zu previousCurrentIndex=%d previousURL=%s",
+            frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+            previousNavigation->m_entries.size(),
+            previousNavigation->m_currentEntryIndex ? static_cast<int>(*previousNavigation->m_currentEntryIndex) : -1,
+            previousWindow->document() ? previousWindow->document()->url().string().utf8().data() : "");
 
         bool shouldProcessPreviousNavigationEntries = [&]() {
             if (!previousNavigation->m_currentEntryIndex)
@@ -169,6 +205,10 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
             return true;
         }();
 
+        WTFLogAlways("NAVAPI DEBUG initializeForNewWindow previousWindow decision frame=%llu shouldProcess=%d",
+            frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+            shouldProcessPreviousNavigationEntries);
+
         if (shouldProcessPreviousNavigationEntries) {
             for (auto& entry : previousNavigation->m_entries)
                 m_entries.append(NavigationHistoryEntry::create(*this, entry.get()));
@@ -179,8 +219,16 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
                 m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, *currentItem);
                 if (m_currentEntryIndex) {
                     setActivation(protect(frame()->loader().history().previousItem()).get(), navigationType);
+                    WTFLogAlways("NAVAPI DEBUG initializeForNewWindow success from previous traverse frame=%llu entries=%zu currentIndex=%d",
+                        frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+                        m_entries.size(),
+                        m_currentEntryIndex ? static_cast<int>(*m_currentEntryIndex) : -1);
                     return;
                 }
+                WTFLogAlways("NAVAPI DEBUG initializeForNewWindow previous traverse did not find currentItem frame=%llu copiedEntries=%zu currentSequence=%llu",
+                    frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+                    m_entries.size(),
+                    static_cast<unsigned long long>(currentItem->itemSequenceNumber()));
                 // We are doing a cross document traversal, we can't rely on previous window, so clear
                 // m_entries and fall back to the normal algorithm for new windows.
                 m_entries = { };
@@ -195,8 +243,16 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
                 m_currentEntryIndex = getEntryIndexOfHistoryItem(m_entries, *currentItem);
                 if (m_currentEntryIndex) {
                     m_activation = NavigationActivation::create(*navigationType, *currentEntry(), WTF::move(previousEntry));
+                    WTFLogAlways("NAVAPI DEBUG initializeForNewWindow success from previous frame=%llu entries=%zu currentIndex=%d",
+                        frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+                        m_entries.size(),
+                        m_currentEntryIndex ? static_cast<int>(*m_currentEntryIndex) : -1);
                     return;
                 }
+                WTFLogAlways("NAVAPI DEBUG initializeForNewWindow previous non-traverse did not find currentItem frame=%llu copiedEntries=%zu currentSequence=%llu",
+                    frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+                    m_entries.size(),
+                    static_cast<unsigned long long>(currentItem->itemSequenceNumber()));
             }
         }
     }
@@ -205,6 +261,12 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
     m_currentEntryIndex = m_entries.size() - 1;
 
     setActivation(protect(frame()->loader().history().previousItem()).get(), navigationType);
+    WTFLogAlways("NAVAPI DEBUG initializeForNewWindow success fallback frame=%llu entries=%zu currentIndex=%d currentItem=%p url=%s",
+        frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+        m_entries.size(),
+        m_currentEntryIndex ? static_cast<int>(*m_currentEntryIndex) : -1,
+        currentItem.get(),
+        currentItem->urlString().utf8().data());
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#navigation-activation
@@ -530,8 +592,22 @@ NavigationHistoryEntry* Navigation::findEntryByKey(const String& key) const
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigation-traverseto
 Navigation::Result Navigation::traverseTo(JSC::JSGlobalObject& globalObject, const String& key, Options&& options, Ref<DeferredPromise>&& committed, Ref<DeferredPromise>&& finished)
 {
-    if (!hasEntryWithKey(key))
+    RefPtr frame = this->frame();
+    RefPtr document = frame ? frame->document() : nullptr;
+    WTFLogAlways("NAVAPI DEBUG traverseTo frame=%llu url=%s key=%s entries=%zu currentIndex=%d",
+        frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+        document ? document->url().string().utf8().data() : "",
+        key.utf8().data(),
+        m_entries.size(),
+        m_currentEntryIndex ? static_cast<int>(*m_currentEntryIndex) : -1);
+
+    if (!hasEntryWithKey(key)) {
+        WTFLogAlways("NAVAPI DEBUG traverseTo invalid key frame=%llu key=%s entries=%zu",
+            frame ? static_cast<unsigned long long>(frame->frameID().toUInt64()) : 0,
+            key.utf8().data(),
+            m_entries.size());
         return createErrorResult(WTF::move(committed), WTF::move(finished), ExceptionCode::InvalidStateError, "Invalid key"_s);
+    }
 
     return performTraversal(globalObject, key, options, WTF::move(committed), WTF::move(finished));
 }

@@ -60,6 +60,7 @@
 #include "ShouldTreatAsContinuingLoad.h"
 #include "VisitedLinkStore.h"
 #include <WebCore/HTTPStatusCodes.h>
+#include <wtf/Assertions.h>
 #include <wtf/text/CString.h>
 
 #if PLATFORM(COCOA)
@@ -480,27 +481,61 @@ void HistoryController::clearPolicyItem()
 
 void HistoryController::recursiveGatherFramesToNavigate(LocalFrame& frame, Vector<FrameToNavigate>& framesToNavigate, HistoryItem& targetItem, HistoryItem* fromItem)
 {
+    WTFLogAlways("NAVAPI DEBUG recursiveGatherFramesToNavigate frame=%llu targetItem=%p targetFrameID=%llu targetURL=%s fromItem=%p fromURL=%s itemsAreClones=%d childCount=%zu",
+        static_cast<unsigned long long>(frame.frameID().toUInt64()),
+        &targetItem,
+        targetItem.frameID() ? static_cast<unsigned long long>(targetItem.frameID()->toUInt64()) : 0,
+        targetItem.urlString().utf8().data(),
+        fromItem,
+        fromItem ? fromItem->urlString().utf8().data() : "",
+        itemsAreClones(targetItem, fromItem),
+        targetItem.children().size());
+
     if (!itemsAreClones(targetItem, fromItem)) {
         auto frameID = targetItem.frameID();
-        if (!frameID)
+        if (!frameID) {
+            WTFLogAlways("NAVAPI DEBUG recursiveGatherFramesToNavigate return no target frameID frame=%llu targetURL=%s",
+                static_cast<unsigned long long>(frame.frameID().toUInt64()),
+                targetItem.urlString().utf8().data());
             return;
+        }
         framesToNavigate.append(FrameToNavigate { frame, fromItem, targetItem });
+        WTFLogAlways("NAVAPI DEBUG recursiveGatherFramesToNavigate append frame=%llu targetFrameID=%llu framesToNavigate=%zu fromItem=%p sameDocument=%d",
+            static_cast<unsigned long long>(frame.frameID().toUInt64()),
+            static_cast<unsigned long long>(frameID->toUInt64()),
+            framesToNavigate.size(),
+            fromItem,
+            fromItem && fromItem->shouldDoSameDocumentNavigationTo(targetItem));
         if (!fromItem || !fromItem->shouldDoSameDocumentNavigationTo(targetItem))
             return;
     }
     ASSERT(fromItem);
     for (Ref childItem : targetItem.children()) {
         auto frameID = childItem->frameID();
-        if (!frameID)
+        if (!frameID) {
+            WTFLogAlways("NAVAPI DEBUG recursiveGatherFramesToNavigate skip child no frameID parentFrame=%llu childURL=%s",
+                static_cast<unsigned long long>(frame.frameID().toUInt64()),
+                childItem->urlString().utf8().data());
             continue;
+        }
 
         RefPtr fromChildItem = fromItem->childItemWithFrameID(*frameID);
-        if (!fromChildItem)
+        if (!fromChildItem) {
+            WTFLogAlways("NAVAPI DEBUG recursiveGatherFramesToNavigate skip child no fromChildItem parentFrame=%llu childFrameID=%llu childURL=%s",
+                static_cast<unsigned long long>(frame.frameID().toUInt64()),
+                static_cast<unsigned long long>(frameID->toUInt64()),
+                childItem->urlString().utf8().data());
             continue;
+        }
 
         RefPtr subframe = dynamicDowncast<LocalFrame>(frame.tree().descendantByFrameID(*frameID));
-        if (!subframe)
+        if (!subframe) {
+            WTFLogAlways("NAVAPI DEBUG recursiveGatherFramesToNavigate return no subframe parentFrame=%llu childFrameID=%llu childURL=%s",
+                static_cast<unsigned long long>(frame.frameID().toUInt64()),
+                static_cast<unsigned long long>(frameID->toUInt64()),
+                childItem->urlString().utf8().data());
             return;
+        }
 
         recursiveGatherFramesToNavigate(*subframe, framesToNavigate, childItem, fromChildItem.get());
     }
@@ -521,6 +556,13 @@ void HistoryController::setDefersLoading(bool defer)
 void HistoryController::updateForBackForwardNavigation()
 {
     LOG(History, "HistoryController %p updateForBackForwardNavigation: Updating History for back/forward navigation in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().data() : "");
+    WTFLogAlways("NAVAPI DEBUG updateForBackForwardNavigation before frame=%llu currentItem=%p currentURL=%s previousItem=%p provisionalItem=%p loadType=%d",
+        static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+        m_currentItem.get(),
+        m_currentItem ? m_currentItem->urlString().utf8().data() : "",
+        m_previousItem.get(),
+        m_provisionalItem.get(),
+        static_cast<int>(m_frame->loader().loadType()));
 
     // Must grab the current scroll position before disturbing it
     if (!m_frameLoadComplete)
@@ -529,6 +571,12 @@ void HistoryController::updateForBackForwardNavigation()
     // When traversing history, we may end up redirecting to a different URL
     // this time (e.g., due to cookies).  See http://webkit.org/b/49654.
     updateCurrentItem();
+    WTFLogAlways("NAVAPI DEBUG updateForBackForwardNavigation after frame=%llu currentItem=%p currentURL=%s previousItem=%p provisionalItem=%p",
+        static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+        m_currentItem.get(),
+        m_currentItem ? m_currentItem->urlString().utf8().data() : "",
+        m_previousItem.get(),
+        m_provisionalItem.get());
 }
 
 void HistoryController::updateForReloadOrReplace()
@@ -949,25 +997,59 @@ Ref<HistoryItem> HistoryController::createItemTree(HistoryItemClient& client, Lo
 // frame and all its kids in recursiveGoToItem.
 void HistoryController::recursiveSetProvisionalItem(HistoryItem& item, HistoryItem* fromItem, ForNavigationAPI forNavigationAPI)
 {
+    WTFLogAlways("NAVAPI DEBUG recursiveSetProvisionalItem frame=%llu item=%p itemFrameID=%llu itemURL=%s fromItem=%p fromURL=%s forNavigationAPI=%d itemsAreClones=%d",
+        static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+        &item,
+        item.frameID() ? static_cast<unsigned long long>(item.frameID()->toUInt64()) : 0,
+        item.urlString().utf8().data(),
+        fromItem,
+        fromItem ? fromItem->urlString().utf8().data() : "",
+        static_cast<int>(forNavigationAPI),
+        itemsAreClones(item, fromItem));
+
     if (!itemsAreClones(item, fromItem)) {
-        if (forNavigationAPI == ForNavigationAPI::No || !fromItem || !fromItem->shouldDoSameDocumentNavigationTo(item))
+        if (forNavigationAPI == ForNavigationAPI::No || !fromItem || !fromItem->shouldDoSameDocumentNavigationTo(item)) {
+            WTFLogAlways("NAVAPI DEBUG recursiveSetProvisionalItem return not clone frame=%llu forNavigationAPI=%d fromItem=%p sameDocument=%d",
+                static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+                static_cast<int>(forNavigationAPI),
+                fromItem,
+                fromItem && fromItem->shouldDoSameDocumentNavigationTo(item));
             return;
+        }
     } else {
         // Set provisional item, which will be committed in recursiveUpdateForCommit.
         m_provisionalItem = item;
+        WTFLogAlways("NAVAPI DEBUG recursiveSetProvisionalItem set provisional frame=%llu provisionalItem=%p url=%s",
+            static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+            m_provisionalItem.get(),
+            m_provisionalItem ? m_provisionalItem->urlString().utf8().data() : "");
     }
 
     for (Ref childItem : item.children()) {
         auto frameID = childItem->frameID();
-        if (!frameID)
+        if (!frameID) {
+            WTFLogAlways("NAVAPI DEBUG recursiveSetProvisionalItem skip child no frameID parentFrame=%llu childURL=%s",
+                static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+                childItem->urlString().utf8().data());
             continue;
+        }
 
         RefPtr fromChildItem = fromItem->childItemWithFrameID(*frameID);
-        if (!fromChildItem)
+        if (!fromChildItem) {
+            WTFLogAlways("NAVAPI DEBUG recursiveSetProvisionalItem skip child no fromChildItem parentFrame=%llu childFrameID=%llu childURL=%s",
+                static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+                static_cast<unsigned long long>(frameID->toUInt64()),
+                childItem->urlString().utf8().data());
             continue;
+        }
 
         if (RefPtr childFrame = dynamicDowncast<LocalFrame>(m_frame->tree().descendantByFrameID(*frameID)))
             childFrame->loader().history().recursiveSetProvisionalItem(childItem, fromChildItem.get());
+        else
+            WTFLogAlways("NAVAPI DEBUG recursiveSetProvisionalItem no childFrame parentFrame=%llu childFrameID=%llu childURL=%s",
+                static_cast<unsigned long long>(m_frame->frameID().toUInt64()),
+                static_cast<unsigned long long>(frameID->toUInt64()),
+                childItem->urlString().utf8().data());
     }
 }
 
